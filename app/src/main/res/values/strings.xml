@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Shirodhara</string>
+    <string name="dashboard_title">Shirodhara Treatment</string>
+    <string name="treatment_settings">Treatment Settings</string>
+    <string name="duration">Duration</string>
+    <string name="temperature">Temperature</string>
+    <string name="start_treatment">Start Treatment</string>
+    <string name="treatment_in_progress">Treatment in Progress</string>
+    <string name="remaining_time">Remaining Time</string>
+    <string name="target">Target</string>
+    <string name="actual">Actual</string>
+    <string name="cancel_treatment">Cancel Treatment</string>
+    <string name="min">Min</string>
+    <string name="min_suffix">min</string>
+    <string name="celsius_suffix">°C</string>
+</resources>
