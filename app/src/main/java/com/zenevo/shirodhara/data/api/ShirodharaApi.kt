@@ -5,6 +5,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 
+
 data class HealthResponse(
     val temperature: Float,
     val heater_state: Boolean,
@@ -15,24 +16,28 @@ data class HealthResponse(
     val remaining_time: Long? = null
 )
 
-data class TreatmentRequest(
+
+data class ParameterRequest(
     val duration: Int,
-    val temperature: Int,
-    val start_treatment: Boolean = false
+    val temperature: Int
 )
+
+
+data class ActionRequest(
+    val action: String
+)
+
 
 data class TreatmentResponse(
     val status: String
 )
 
-data class ErrorResponse(
-    val error: String
-)
 
 interface ShirodharaApi {
     @GET("/api/health")
     suspend fun getHealth(): Response<HealthResponse>
+
     
     @POST("/api/update")
-    suspend fun startTreatment(@Body request: TreatmentRequest): Response<TreatmentResponse>
-} 
+    suspend fun updateDeviceState(@Body body: Any): Response<TreatmentResponse>
+}

@@ -1,5 +1,6 @@
 package com.zenevo.shirodhara.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -13,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -21,6 +21,7 @@ import androidx.navigation.NavController
 import com.zenevo.shirodhara.ui.components.ConnectionIndicator
 import com.zenevo.shirodhara.ui.theme.*
 import com.zenevo.shirodhara.ui.viewmodel.ShirodharaViewModel
+import com.zenevo.shirodhara.ui.viewmodel.TreatmentState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,22 +33,23 @@ fun TreatmentScreen(
 ) {
     val healthData by viewModel.healthData.collectAsState()
     val isConnected by viewModel.isConnected.collectAsState()
+    val treatmentState by viewModel.treatmentState.collectAsState()
 
-    // Effect to start treatment when the screen is first shown
-    LaunchedEffect(key1 = Unit) {
-        viewModel.startTreatment(
-            duration = duration,
-            temperature = temperature,
-            startTreatmentNow = true
-        )
+    // Set parameters when the screen is first composed
+    LaunchedEffect(Unit) {
+        viewModel.setTreatmentParameters(duration, temperature)
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Treatment in Progress") },
+                title = { Text("Shirodhara Treatment") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = {
+                        viewModel.stopTreatment() // Ensure everything stops
+                        viewModel.resetToIdle()
+                        navController.popBackStack()
+                    }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -60,139 +62,188 @@ fun TreatmentScreen(
             )
         }
     ) { paddingValues ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
+                .background(BackgroundCream),
+            contentAlignment = Alignment.Center
         ) {
-            // Timer Circle
-            Box(
-                modifier = Modifier
-                    .size(200.dp)
-                    .clip(CircleShape)
-                    .background(PrimaryBlue),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "Remaining Time",
-                        color = Color.White,
-                        fontSize = 16.sp
+            when (treatmentState) {
+                is TreatmentState.Heating, TreatmentState.Ready, TreatmentState.InProgress ->
+                    TreatmentInProgressContent(
+                        navController = navController, // Pass NavController
+                        viewModel = viewModel,
+                        treatmentState = treatmentState,
+                        targetTemp = healthData?.target_temperature ?: temperature,
+                        actualTemp = healthData?.temperature ?: 0f,
+                        remainingTime = healthData?.remaining_time ?: (duration * 60L)
                     )
-                    Text(
-                        text = formatTime(healthData?.remaining_time ?: (duration * 60L)),
-                        color = Color.White,
-                        fontSize = 40.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                is TreatmentState.Completed ->
+                    TreatmentCompletedContent {
+                        viewModel.resetToIdle()
+                        navController.popBackStack()
+                    }
+                is TreatmentState.Error -> {
+                    // Handle error state if needed
+                    Text("An error occurred. Please go back.", color = ErrorRed)
+                }
+                else -> {
+                    // Show a loading indicator or idle state
+                    CircularProgressIndicator()
                 }
             }
+        }
+    }
+}
 
-            // Temperature Card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF2C2C2C)
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
+@Composable
+fun TreatmentInProgressContent(
+    navController: NavController, // Add NavController to handle navigation
+    viewModel: ShirodharaViewModel,
+    treatmentState: TreatmentState,
+    targetTemp: Int,
+    actualTemp: Float,
+    remainingTime: Long
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Status Text
+        Text(
+            text = when (treatmentState) {
+                is TreatmentState.Heating -> "Heating in Progress..."
+                is TreatmentState.Ready -> "Ready to Start"
+                is TreatmentState.InProgress -> "Treatment in Progress"
+                else -> ""
+            },
+            style = MaterialTheme.typography.headlineSmall,
+            color = DarkBlue,
+            fontWeight = FontWeight.Bold
+        )
+
+        // Timer or Temperature Display
+        if (treatmentState is TreatmentState.InProgress) {
+            TimerCircle(time = remainingTime)
+        } else {
+            TemperatureDisplay(target = targetTemp, actual = actualTemp)
+        }
+
+        // Action Button Column
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            AnimatedVisibility(visible = treatmentState is TreatmentState.Ready) {
+                Button(
+                    onClick = { viewModel.startTreatment() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(
-                        text = "Temperature",
-                        color = PrimaryBlue,
-                        fontSize = 24.sp,
-                        modifier = Modifier.padding(bottom = 24.dp)
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        // Target Temperature
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Target",
-                                color = Color.Gray,
-                                fontSize = 16.sp
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(100.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1976D2).copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "${healthData?.target_temperature ?: temperature}°C",
-                                    color = Color(0xFF1976D2),
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                        
-                        // Actual Temperature
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Actual",
-                                color = Color.Gray,
-                                fontSize = 16.sp
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(100.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF4CAF50).copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "${String.format("%.1f", healthData?.temperature ?: 0.0)}°C",
-                                    color = Color(0xFF4CAF50),
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
+                    Text("Start Treatment", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Cancel Treatment Button
+            // FIX: The onClick for this button now correctly navigates back.
             Button(
-                onClick = { navController.popBackStack() },
+                onClick = {
+                    viewModel.stopTreatment()
+                    viewModel.resetToIdle()
+                    navController.popBackStack()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFD32F2F)
-                ),
-                shape = RoundedCornerShape(8.dp)
+                colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text(
-                    text = "Cancel Treatment",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text("Cancel Treatment", fontSize = 18.sp, fontWeight = FontWeight.Medium)
             }
+        }
+    }
+}
+
+@Composable
+fun TreatmentCompletedContent(onFinish: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.padding(24.dp)
+    ) {
+        Text(
+            "Treatment Completed!",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = DarkBlue
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onFinish,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Go to Dashboard", fontSize = 18.sp)
+        }
+    }
+}
+
+@Composable
+fun TimerCircle(time: Long) {
+    Box(
+        modifier = Modifier
+            .size(220.dp)
+            .clip(CircleShape)
+            .background(PrimaryBlue.copy(alpha = 0.1f))
+            .padding(16.dp)
+            .clip(CircleShape)
+            .background(PrimaryBlue),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Remaining Time", color = Color.White, fontSize = 18.sp)
+            Text(
+                formatTime(time),
+                color = Color.White,
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+fun TemperatureDisplay(target: Int, actual: Float) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TempGauge(label = "Target", value = "$target°C", color = PrimaryBlue)
+        TempGauge(label = "Actual", value = "${String.format("%.1f", actual)}°C", color = SuccessGreen)
+    }
+}
+
+@Composable
+fun TempGauge(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = TextDark, style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(value, color = color, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
