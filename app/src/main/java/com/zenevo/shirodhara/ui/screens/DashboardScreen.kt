@@ -1,5 +1,6 @@
 package com.zenevo.shirodhara.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,14 +21,15 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    onStartTreatment: (duration: Int, temperature: Int) -> Unit
+    onStartTreatment: (duration: Int, temperature: Int) -> Unit,
+    onFindDevice: () -> Unit
 ) {
     var durationMinutes by remember { mutableStateOf(30) }
     var temperature by remember { mutableStateOf(37) }
-    
+
     val maxDuration = 60
     val maxTemperature = 45
-    
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = BackgroundCream
@@ -46,9 +48,9 @@ fun DashboardScreen(
                 color = DarkBlue,
                 modifier = Modifier.padding(vertical = 16.dp)
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Treatment settings card
             Card(
                 modifier = Modifier
@@ -69,7 +71,7 @@ fun DashboardScreen(
                         color = PrimaryBlue,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
-                    
+
                     // Duration setting
                     SettingSection(
                         title = "Duration",
@@ -80,9 +82,9 @@ fun DashboardScreen(
                         steps = (maxDuration / 5) - 1,
                         maxLabel = "$maxDuration min"
                     )
-                    
+
                     Spacer(modifier = Modifier.height(24.dp))
-                    
+
                     // Temperature setting
                     SettingSection(
                         title = "Temperature",
@@ -95,9 +97,9 @@ fun DashboardScreen(
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.weight(1f))
-            
+
             // Start treatment button
             Button(
                 onClick = { onStartTreatment(durationMinutes, temperature) },
@@ -112,6 +114,26 @@ fun DashboardScreen(
                     text = "Start Treatment",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Find Device Button
+            OutlinedButton(
+                onClick = onFindDevice,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(2.dp, PrimaryBlue)
+            ) {
+                Text(
+                    text = "Find Device",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryBlue
                 )
             }
         }
@@ -144,7 +166,7 @@ fun SettingSection(
                 style = MaterialTheme.typography.titleMedium,
                 color = TextDark
             )
-            
+
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -163,9 +185,9 @@ fun SettingSection(
                 )
             }
         }
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -176,7 +198,7 @@ fun SettingSection(
                 modifier = Modifier.width(30.dp),
                 textAlign = TextAlign.Center
             )
-            
+
             Slider(
                 value = currentValue,
                 onValueChange = onValueChange,
@@ -191,7 +213,7 @@ fun SettingSection(
                     inactiveTrackColor = LightBlue.copy(alpha = 0.3f)
                 )
             )
-            
+
             Text(
                 text = maxLabel,
                 fontSize = 12.sp,
@@ -206,6 +228,9 @@ fun SettingSection(
 @Composable
 fun DashboardScreenPreview() {
     ShirodharaTheme {
-        DashboardScreen(onStartTreatment = { _, _ -> })
+        DashboardScreen(
+            onStartTreatment = { _, _ -> },
+            onFindDevice = {}
+        )
     }
-} 
+}

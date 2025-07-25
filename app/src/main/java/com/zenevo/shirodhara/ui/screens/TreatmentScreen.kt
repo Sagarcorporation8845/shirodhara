@@ -18,35 +18,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import androidx.navigation.compose.currentBackStackEntryAsState
 import com.zenevo.shirodhara.ui.components.ConnectionIndicator
 import com.zenevo.shirodhara.ui.theme.*
 import com.zenevo.shirodhara.ui.viewmodel.ShirodharaViewModel
-import com.zenevo.shirodhara.ui.viewmodel.TreatmentState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TreatmentScreen(
-    viewModel: ShirodharaViewModel = viewModel(),
-    navController: NavController
+    navController: NavController,
+    duration: Int,
+    temperature: Int,
+    viewModel: ShirodharaViewModel = viewModel()
 ) {
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val initialDuration = navBackStackEntry?.arguments?.getString("duration")?.toIntOrNull() ?: 30
-    val initialTemperature = navBackStackEntry?.arguments?.getString("temperature")?.toIntOrNull() ?: 37
-    
     val healthData by viewModel.healthData.collectAsState()
-    val treatmentState by viewModel.treatmentState.collectAsState()
     val isConnected by viewModel.isConnected.collectAsState()
-    
-    // Effect to start treatment when screen is first shown
-    LaunchedEffect(Unit) {
+
+    // Effect to start treatment when the screen is first shown
+    LaunchedEffect(key1 = Unit) {
         viewModel.startTreatment(
-            duration = initialDuration,
-            temperature = initialTemperature,
+            duration = duration,
+            temperature = temperature,
             startTreatmentNow = true
         )
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -91,7 +86,7 @@ fun TreatmentScreen(
                         fontSize = 16.sp
                     )
                     Text(
-                        text = formatTime(healthData?.remaining_time ?: 0L),
+                        text = formatTime(healthData?.remaining_time ?: (duration * 60L)),
                         color = Color.White,
                         fontSize = 40.sp,
                         fontWeight = FontWeight.Bold
@@ -143,7 +138,7 @@ fun TreatmentScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "${healthData?.target_temperature ?: initialTemperature}°C",
+                                    text = "${healthData?.target_temperature ?: temperature}°C",
                                     color = Color(0xFF1976D2),
                                     fontSize = 24.sp,
                                     fontWeight = FontWeight.Bold
@@ -202,9 +197,8 @@ fun TreatmentScreen(
     }
 }
 
-private fun formatTime(milliseconds: Long): String {
-    val seconds = milliseconds / 1000
+private fun formatTime(seconds: Long): String {
     val minutes = seconds / 60
     val remainingSeconds = seconds % 60
     return String.format("%02d:%02d", minutes, remainingSeconds)
-} 
+}
