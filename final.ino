@@ -47,7 +47,7 @@ StaticJsonDocument<256> jsonDoc;
 #define TEMPERATURE_NOMINAL 25     // Temperature for nominal resistance (25 C)
 #define B_COEFFICIENT 3950         // Beta coefficient of the thermistor
 #define SERIES_RESISTOR 4700       // Value of the 4.7k resistor
-#define NUM_SAMPLES 10             // Number of samples for averaging
+
 
 // Bluetooth Module
 SoftwareSerial bluetooth(17, 18); // RX, TX
