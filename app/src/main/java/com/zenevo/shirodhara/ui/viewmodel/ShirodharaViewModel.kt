@@ -50,17 +50,35 @@ class ShirodharaViewModel : ViewModel() {
                         _healthData.value = health
                         _isConnected.value = true
 
-                        // Update treatment state based on health data
-                        health?.let {
-                            if (it.treatment_active) {
+                        // --- REFINED STATE LOGIC ---
+                        // The health status from the device is the single source of truth.
+                        health?.let { newStatus ->
+                            val currentState = _treatmentState.value
+
+                            if (newStatus.treatment_active) {
+                                // If device says treatment is active, the state is InProgress.
                                 _treatmentState.value = TreatmentState.InProgress
-                            } else if (_treatmentState.value == TreatmentState.InProgress && !it.treatment_active) {
-                                // If treatment was in progress but now is not, it's completed
-                                _treatmentState.value = TreatmentState.Completed
-                            } else if (it.temperature_reached && _treatmentState.value == TreatmentState.Heating) {
-                                _treatmentState.value = TreatmentState.Ready
+                            } else if (newStatus.heating_active) {
+                                // If not treating, but heating is active...
+                                if (newStatus.temperature_reached) {
+                                    // ...and temp is reached, state is Ready.
+                                    _treatmentState.value = TreatmentState.Ready
+                                } else {
+                                    // ...otherwise, state is Heating.
+                                    _treatmentState.value = TreatmentState.Heating
+                                }
+                            } else {
+                                // Device is not treating and not heating.
+                                if (currentState is TreatmentState.InProgress) {
+                                    // If the app thought it was treating, it must be complete now.
+                                    _treatmentState.value = TreatmentState.Completed
+                                } else if (currentState !is TreatmentState.Completed && currentState !is TreatmentState.Idle) {
+                                    // If we were heating or ready, but now the device is idle, reset to idle.
+                                    _treatmentState.value = TreatmentState.Idle
+                                }
                             }
                         }
+
                     } else {
                         _isConnected.value = false
                     }
@@ -72,46 +90,41 @@ class ShirodharaViewModel : ViewModel() {
         }
     }
 
+    // This function now just sends the command and lets the health monitor update the state.
     fun setTreatmentParameters(duration: Int, temperature: Int) {
         viewModelScope.launch {
-            _treatmentState.value = TreatmentState.Heating
+            _treatmentState.value = TreatmentState.Heating // Set initial state for user feedback
             try {
-                val response = repository.setParameters(duration, temperature)
-                if (!response.isSuccessful) {
-                    _treatmentState.value = TreatmentState.Error("Failed to set parameters")
-                }
+                repository.setParameters(duration, temperature)
             } catch (e: IOException) {
                 _treatmentState.value = TreatmentState.Error("Network error: ${e.message}")
             }
         }
     }
 
+    // This function now just sends the command.
     fun startTreatment() {
         viewModelScope.launch {
             try {
-                val response = repository.startTreatment()
-                if (response.isSuccessful) {
-                    _treatmentState.value = TreatmentState.InProgress
-                } else {
-                    _treatmentState.value = TreatmentState.Error("Failed to start treatment")
-                }
+                repository.startTreatment()
             } catch (e: IOException) {
                 _treatmentState.value = TreatmentState.Error("Network error: ${e.message}")
             }
         }
     }
-    
+
+    // This function now just sends the command.
     fun stopTreatment() {
         viewModelScope.launch {
             try {
                 repository.stopTreatment()
-                _treatmentState.value = TreatmentState.Completed
             } catch (e: IOException) {
                 _treatmentState.value = TreatmentState.Error("Network error: ${e.message}")
             }
         }
     }
 
+    // This is used by the UI to go back to the dashboard after completion.
     fun resetToIdle() {
         _treatmentState.value = TreatmentState.Idle
     }
