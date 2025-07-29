@@ -41,8 +41,8 @@ StaticJsonDocument<256> jsonDoc;
 
 // Temperature control parameters
 #define TEMP_TOLERANCE 3.0
-#define TEMP_NUM_SAMPLES 5 // Number of samples to average for stability
-#define TEMP_OFFSET 7.1 // Calibration offset in degrees C
+#define TEMP_NUM_SAMPLES 5 
+#define TEMP_OFFSET 7.1 
 
 // Thermistor parameters
 #define THERMISTOR_NOMINAL 10000
@@ -70,14 +70,13 @@ bool servoActive = false;
 unsigned long lastServoUpdateTime = 0;
 int servoPosition = 0;
 int servoDirection = 1;
-int servoMinAngle = 60;
-int servoMaxAngle = 120;
+int servoMinAngle = 70;  // Was 60
+int servoMaxAngle = 110; // Was 120
 int servoSpeed = 5;
 unsigned long servoUpdateInterval = 50;
 
-// Servo parameters
-#define MIN_MICROS 800
-#define MAX_MICROS 2450
+#define MIN_MICROS 600   // Was 800
+#define MAX_MICROS 2400  // Was 2450
 
 // Servo object
 Servo oscillationServo;
@@ -103,7 +102,7 @@ bool settingDuration = true;
 String durationStr = "";
 String temperatureStr = "";
 unsigned long lastTempReadTime = 0;
-const long tempReadInterval = 2000; // Read temperature every 2 seconds
+const long tempReadInterval = 2000; 
 
 // Forward declarations
 void displaySettingsScreen();
@@ -453,7 +452,7 @@ void startHeating() {
   Serial.println("DEBUG: startHeating() called.");
   heatingActive = true;
   temperatureReached = false;
-  treatmentActive = false;
+  treatmentActive = false; 
   treatmentDuration = (unsigned long)duration * 60UL * 1000UL; 
   controlHeater();
   displayHeatingScreen();
@@ -532,7 +531,6 @@ void loop() {
   }
 
   if (treatmentActive) {
-    // Check if the timer is finished
     if (millis() - treatmentStartTime >= treatmentDuration) {
         Serial.println("--- TIMER CHECK ---");
         Serial.println("DEBUG: Timer finished. Calling stopTreatment().");
