@@ -41,6 +41,7 @@ StaticJsonDocument<256> jsonDoc;
 
 // Temperature control parameters
 #define TEMP_TOLERANCE 3.0
+#define TEMP_NUM_SAMPLES 5 // Number of samples to average for stability
 
 // Thermistor parameters
 #define THERMISTOR_NOMINAL 10000
@@ -260,23 +261,45 @@ void setup() {
 }
 
 float readTemperature() {
-  // Read a single raw value from the ADC
-  int rawADC = analogRead(TEMP_SENSOR_PIN);
+  long sum = 0;
+  int validReadings = 0;
 
-  // Convert the analog value to resistance
-  float resistance = (float)SERIES_RESISTOR / (4095.0 / (float)rawADC - 1.0);
+  for (int i = 0; i < TEMP_NUM_SAMPLES; i++) {
+    int reading = analogRead(TEMP_SENSOR_PIN);
 
-  // Use the Steinhart-Hart equation to calculate temperature
-  float steinhart;
-  steinhart = resistance / THERMISTOR_NOMINAL;          // (R/Ro)
-  steinhart = log(steinhart);                        // ln(R/Ro)
-  steinhart /= B_COEFFICIENT;                        // 1/B * ln(R/Ro)
-  steinhart += 1.0 / (TEMPERATURE_NOMINAL + 273.15); // + (1/To)
-  steinhart = 1.0 / steinhart;                       // Invert
-  steinhart -= 273.15;                               // Convert to Celsius
+    if (reading > 1 && reading < 4094) {
+      sum += reading;
+      validReadings++;
+    }
+    delay(10); // Small delay between readings
+  }
+
+  if (validReadings == 0) {
+    return NAN; // Return "Not a Number" to indicate an error
+  }
+
+  float avgReading = (float)sum / validReadings;
+
+  if (avgReading >= 4095.0) {
+    return NAN;
+  }
+
+  float resistance = SERIES_RESISTOR / (4095.0 / avgReading - 1.0);
+  
+  if (resistance <= 0) {
+    return NAN;
+  }
+
+  float steinhart = resistance / THERMISTOR_NOMINAL;
+  steinhart = log(steinhart);
+  steinhart /= B_COEFFICIENT;
+  steinhart += 1.0 / (TEMPERATURE_NOMINAL + 273.15);
+  steinhart = 1.0 / steinhart;
+  steinhart -= 273.15;
 
   return steinhart;
 }
+
 
 void displaySettingsScreen() {
   lcd.clear();
@@ -510,7 +533,10 @@ void loop() {
 
   if (currentMillis - lastTempReadTime >= tempReadInterval) {
     lastTempReadTime = currentMillis;
-    currentTemperature = readTemperature();
+    float temp = readTemperature();
+    if (!isnan(temp)) {
+      currentTemperature = temp;
+    }
     controlHeater();
     if (treatmentActive) displayTreatmentScreen();
     else if (heatingActive && !temperatureReached) displayHeatingScreen();
