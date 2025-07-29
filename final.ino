@@ -42,6 +42,7 @@ StaticJsonDocument<256> jsonDoc;
 // Temperature control parameters
 #define TEMP_TOLERANCE 3.0
 #define TEMP_NUM_SAMPLES 5 // Number of samples to average for stability
+#define TEMP_OFFSET 7.1 // Calibration offset in degrees C
 
 // Thermistor parameters
 #define THERMISTOR_NOMINAL 10000
@@ -145,30 +146,34 @@ void handleHealth() {
 }
 
 void handleUpdate() {
+  Serial.println("DEBUG: handleUpdate() called.");
   if (!server.hasArg("plain")) {
+    Serial.println("DEBUG: ERROR - No data received in handleUpdate.");
     server.send(400, "application/json", "{\"error\":\"No data received\"}");
     return;
   }
 
   String body = server.arg("plain");
+  Serial.println("DEBUG: Received JSON: " + body);
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, body);
 
   if (error) {
+    Serial.println("DEBUG: ERROR - Invalid JSON.");
     server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
     return;
   }
 
   if (doc.containsKey("action")) {
     String action = doc["action"];
+    Serial.println("DEBUG: Received action: " + action);
     if (action == "start") {
       if (temperatureReached && !treatmentActive) {
         startTreatment();
         server.send(200, "application/json", "{\"status\":\"Treatment started\"}");
-      } else if (treatmentActive) {
-        server.send(400, "application/json", "{\"error\":\"Treatment already active\"}");
       } else {
-        server.send(400, "application/json", "{\"error\":\"Temperature not ready yet\"}");
+        Serial.println("DEBUG: ERROR - 'start' command received but conditions not met.");
+        server.send(400, "application/json", "{\"error\":\"Conditions not met to start\"}");
       }
     } else if (action == "stop") {
       stopTreatment();
@@ -182,6 +187,7 @@ void handleUpdate() {
   if (doc.containsKey("duration") && doc.containsKey("temperature")) {
     int newDuration = doc["duration"];
     int newTemperature = doc["temperature"];
+    Serial.println("DEBUG: Received duration: " + String(newDuration) + ", temperature: " + String(newTemperature));
 
     if (newDuration <= 0 || newDuration > MAX_DURATION || newTemperature <= 0 || newTemperature > MAX_TEMPERATURE) {
       server.send(400, "application/json", "{\"error\":\"Invalid parameters\"}");
@@ -216,6 +222,7 @@ void setupAPI() {
 void setup() {
   Serial.begin(115200);
   bluetooth.begin(9600);
+  Serial.println("\n\n--- Shirodhara Device Booting Up ---");
 
   setupWiFi();
   setupAPI();
@@ -258,37 +265,30 @@ void setup() {
 
   currentTemperature = readTemperature();
   displaySettingsScreen();
+  Serial.println("--- Setup Complete ---");
 }
 
 float readTemperature() {
   long sum = 0;
   int validReadings = 0;
-
   for (int i = 0; i < TEMP_NUM_SAMPLES; i++) {
     int reading = analogRead(TEMP_SENSOR_PIN);
-
     if (reading > 1 && reading < 4094) {
       sum += reading;
       validReadings++;
     }
-    delay(10); // Small delay between readings
+    delay(10);
   }
 
   if (validReadings == 0) {
-    return NAN; // Return "Not a Number" to indicate an error
+    Serial.println("DEBUG: ERROR - No valid temperature readings.");
+    return NAN;
   }
 
   float avgReading = (float)sum / validReadings;
-
-  if (avgReading >= 4095.0) {
-    return NAN;
-  }
-
+  if (avgReading >= 4095.0) return NAN;
   float resistance = SERIES_RESISTOR / (4095.0 / avgReading - 1.0);
-  
-  if (resistance <= 0) {
-    return NAN;
-  }
+  if (resistance <= 0) return NAN;
 
   float steinhart = resistance / THERMISTOR_NOMINAL;
   steinhart = log(steinhart);
@@ -296,10 +296,9 @@ float readTemperature() {
   steinhart += 1.0 / (TEMPERATURE_NOMINAL + 273.15);
   steinhart = 1.0 / steinhart;
   steinhart -= 273.15;
-
-  return steinhart;
+  
+  return steinhart - TEMP_OFFSET;
 }
-
 
 void displaySettingsScreen() {
   lcd.clear();
@@ -439,6 +438,7 @@ void controlHeater() {
     }
     if (heatingActive && !temperatureReached && currentTemperature >= temperature) {
       temperatureReached = true;
+      Serial.println("DEBUG: Temperature has been reached.");
       displayTemperatureReadyScreen();
     }
   } else {
@@ -450,12 +450,14 @@ void controlHeater() {
 }
 
 void startHeating() {
+  Serial.println("DEBUG: startHeating() called.");
   heatingActive = true;
   temperatureReached = false;
   treatmentActive = false;
+  treatmentDuration = (unsigned long)duration * 60UL * 1000UL; 
   controlHeater();
   displayHeatingScreen();
-  Serial.println("Heating started");
+  Serial.println("DEBUG: Heating started. Total duration set to: " + String(treatmentDuration) + "ms");
 }
 
 void updateServo() {
@@ -473,13 +475,14 @@ void updateServo() {
 }
 
 void startTreatment() {
+  Serial.println("DEBUG: startTreatment() called.");
   treatmentActive = true;
   heatingActive = false;
   servoActive = true;
   servoPosition = 90;
   oscillationServo.write(servoPosition);
   treatmentStartTime = millis();
-  treatmentDuration = (unsigned long)duration * 60 * 1000;
+  
   digitalWrite(PUMP_RELAY_PIN, HIGH);
   displayTreatmentScreen();
   for (int i = 0; i < 3; i++) {
@@ -488,10 +491,11 @@ void startTreatment() {
     digitalWrite(BUZZER_PIN, LOW);
     delay(100);
   }
-  Serial.println("Treatment started");
+  Serial.println("DEBUG: Treatment actually started. Start time: " + String(treatmentStartTime));
 }
 
 void stopTreatment() {
+  Serial.println("DEBUG: stopTreatment() called.");
   treatmentActive = false;
   heatingActive = false;
   temperatureReached = false;
@@ -511,7 +515,7 @@ void stopTreatment() {
     delay(3000);
     displaySettingsScreen();
   }
-  Serial.println("Treatment stopped/completed");
+  Serial.println("DEBUG: Treatment stopped/completed.");
 }
 
 void loop() {
@@ -527,9 +531,20 @@ void loop() {
     return;
   }
 
-  if (treatmentActive && (currentMillis - treatmentStartTime >= treatmentDuration)) {
-    stopTreatment();
+  if (treatmentActive) {
+    // Check if the timer is finished
+    if (millis() - treatmentStartTime >= treatmentDuration) {
+        Serial.println("--- TIMER CHECK ---");
+        Serial.println("DEBUG: Timer finished. Calling stopTreatment().");
+        Serial.print("DEBUG: Elapsed time: "); Serial.println(millis() - treatmentStartTime);
+        Serial.print("DEBUG: Target duration: "); Serial.println(treatmentDuration);
+        Serial.print("DEBUG: Current millis: "); Serial.println(millis());
+        Serial.print("DEBUG: Start time: "); Serial.println(treatmentStartTime);
+        Serial.println("--------------------");
+        stopTreatment();
+    }
   }
+
 
   if (currentMillis - lastTempReadTime >= tempReadInterval) {
     lastTempReadTime = currentMillis;
