@@ -17,7 +17,6 @@ WebServer server(80);
 
 // JSON document for API responses
 StaticJsonDocument<256> jsonDoc;
-
 // LCD2004 I2C Display
 #define LCD_ADDRESS 0x27
 #define LCD_COLUMNS 20
@@ -41,8 +40,8 @@ StaticJsonDocument<256> jsonDoc;
 
 // Temperature control parameters
 #define TEMP_TOLERANCE 3.0
-#define TEMP_NUM_SAMPLES 5 
-#define TEMP_OFFSET 7.1 
+#define TEMP_NUM_SAMPLES 5
+#define TEMP_OFFSET 7.1
 
 // Thermistor parameters
 #define THERMISTOR_NOMINAL 10000
@@ -52,36 +51,42 @@ StaticJsonDocument<256> jsonDoc;
 
 // Bluetooth Module
 SoftwareSerial bluetooth(17, 18);
-
 // LCD object
 LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLUMNS, LCD_ROWS);
 
-// Emergency stop variables
-bool emergencyStopActive = false;
+// --- Volatile variables for safe multi-task access ---
+volatile bool emergencyStopActive = false;
+volatile bool treatmentActive = false;
+volatile bool heatingActive = false;
+volatile bool temperatureReached = false;
+volatile int duration = 0;
+volatile int temperature = 0;
+volatile float currentTemperature = 0.0;
+volatile bool heaterState = false;
 
-// Treatment variables
-bool treatmentActive = false;
-bool heatingActive = false;
-bool temperatureReached = false;
+// --- Treatment and Timing variables ---
 unsigned long treatmentStartTime = 0;
-unsigned long treatmentDuration = 0; // in milliseconds
-bool heaterState = false;
+unsigned long treatmentDuration = 0;
+unsigned long lastTempReadTime = 0;
+const long tempReadInterval = 2000;
+unsigned long lastEmergencyBuzzerTime = 0; // Rollover-safe buzzer timer
+
+// --- Servo Control variables for smooth motion ---
 bool servoActive = false;
 unsigned long lastServoUpdateTime = 0;
-int servoPosition = 0;
+int servoPositionUs = 1500;
 int servoDirection = 1;
-int servoMinAngle = 70;  // Was 60
-int servoMaxAngle = 110; // Was 120
-int servoSpeed = 5;
-unsigned long servoUpdateInterval = 50;
+int servoMinUs = 1000;
+int servoMaxUs = 2000;
+int servoSpeedUs = 5;
+unsigned long servoUpdateInterval = 30;
 
-#define MIN_MICROS 600   // Was 800
-#define MAX_MICROS 2400  // Was 2450
-
-// Servo object
+// Default Servo pulse width range
+#define MIN_MICROS 600
+#define MAX_MICROS 2400
 Servo oscillationServo;
 
-// Keypad setup
+// --- Keypad Setup ---
 const byte ROWS = 4;
 const byte COLS = 4;
 char keys[ROWS][COLS] = {
@@ -94,15 +99,12 @@ byte rowPins[ROWS] = {25, 26, 27, 14};
 byte colPins[COLS] = {32, 33, 12, 13};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
-// Variables for settings
-int duration = 0;
-int temperature = 0;
-float currentTemperature = 0.0;
+// --- Settings variables ---
+// Using char arrays instead of String to prevent memory fragmentation
+char durationStr[3] = "";
+char temperatureStr[3] = "";
 bool settingDuration = true;
-String durationStr = "";
-String temperatureStr = "";
-unsigned long lastTempReadTime = 0;
-const long tempReadInterval = 2000; 
+
 
 // Forward declarations
 void displaySettingsScreen();
@@ -130,13 +132,12 @@ void handleHealth() {
   jsonDoc["temperature_reached"] = temperatureReached;
   jsonDoc["target_temperature"] = temperature;
   jsonDoc["target_duration"] = duration;
-
   if (treatmentActive) {
     unsigned long elapsedTime = (millis() - treatmentStartTime) / 1000;
     unsigned long remainingSeconds = (treatmentDuration / 1000) > elapsedTime ? (treatmentDuration / 1000) - elapsedTime : 0;
     jsonDoc["remaining_time"] = remainingSeconds;
   } else {
-    jsonDoc["remaining_time"] = duration * 60;
+    jsonDoc["remaining_time"] = (unsigned long)duration * 60;
   }
 
   String response;
@@ -145,33 +146,27 @@ void handleHealth() {
 }
 
 void handleUpdate() {
-  Serial.println("DEBUG: handleUpdate() called.");
   if (!server.hasArg("plain")) {
-    Serial.println("DEBUG: ERROR - No data received in handleUpdate.");
     server.send(400, "application/json", "{\"error\":\"No data received\"}");
     return;
   }
 
   String body = server.arg("plain");
-  Serial.println("DEBUG: Received JSON: " + body);
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, body);
 
   if (error) {
-    Serial.println("DEBUG: ERROR - Invalid JSON.");
     server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
     return;
   }
 
   if (doc.containsKey("action")) {
     String action = doc["action"];
-    Serial.println("DEBUG: Received action: " + action);
     if (action == "start") {
       if (temperatureReached && !treatmentActive) {
         startTreatment();
         server.send(200, "application/json", "{\"status\":\"Treatment started\"}");
       } else {
-        Serial.println("DEBUG: ERROR - 'start' command received but conditions not met.");
         server.send(400, "application/json", "{\"error\":\"Conditions not met to start\"}");
       }
     } else if (action == "stop") {
@@ -186,17 +181,17 @@ void handleUpdate() {
   if (doc.containsKey("duration") && doc.containsKey("temperature")) {
     int newDuration = doc["duration"];
     int newTemperature = doc["temperature"];
-    Serial.println("DEBUG: Received duration: " + String(newDuration) + ", temperature: " + String(newTemperature));
 
     if (newDuration <= 0 || newDuration > MAX_DURATION || newTemperature <= 0 || newTemperature > MAX_TEMPERATURE) {
       server.send(400, "application/json", "{\"error\":\"Invalid parameters\"}");
       return;
     }
 
+    // Safely update shared variables
     duration = newDuration;
     temperature = newTemperature;
-    durationStr = String(duration);
-    temperatureStr = String(temperature);
+    snprintf(durationStr, sizeof(durationStr), "%d", duration);
+    snprintf(temperatureStr, sizeof(temperatureStr), "%d", temperature);
 
     displaySettingsScreen();
     delay(1000);
@@ -222,7 +217,6 @@ void setup() {
   Serial.begin(115200);
   bluetooth.begin(9600);
   Serial.println("\n\n--- Shirodhara Device Booting Up ---");
-
   setupWiFi();
   setupAPI();
 
@@ -236,7 +230,7 @@ void setup() {
   pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);
 
   oscillationServo.attach(SERVO_PIN, MIN_MICROS, MAX_MICROS);
-  oscillationServo.write(90);
+  oscillationServo.writeMicroseconds(1500); // Center the servo
 
   digitalWrite(HEATER_RELAY_PIN, LOW);
   digitalWrite(PUMP_RELAY_PIN, LOW);
@@ -262,7 +256,7 @@ void setup() {
   lcd.print("Keshayurved");
   delay(5000);
 
-  currentTemperature = readTemperature();
+  readTemperature();
   displaySettingsScreen();
   Serial.println("--- Setup Complete ---");
 }
@@ -279,16 +273,17 @@ float readTemperature() {
     delay(10);
   }
 
-  if (validReadings == 0) {
-    Serial.println("DEBUG: ERROR - No valid temperature readings.");
-    return NAN;
-  }
+  if (validReadings == 0) return NAN;
 
   float avgReading = (float)sum / validReadings;
   if (avgReading >= 4095.0) return NAN;
-  float resistance = SERIES_RESISTOR / (4095.0 / avgReading - 1.0);
-  if (resistance <= 0) return NAN;
+  
+  float divisor = (4095.0 / avgReading) - 1.0;
+  if (divisor <= 0) return NAN;
 
+  float resistance = SERIES_RESISTOR / divisor;
+  if (resistance <= 0) return NAN;
+  
   float steinhart = resistance / THERMISTOR_NOMINAL;
   steinhart = log(steinhart);
   steinhart /= B_COEFFICIENT;
@@ -437,7 +432,6 @@ void controlHeater() {
     }
     if (heatingActive && !temperatureReached && currentTemperature >= temperature) {
       temperatureReached = true;
-      Serial.println("DEBUG: Temperature has been reached.");
       displayTemperatureReadyScreen();
     }
   } else {
@@ -449,37 +443,35 @@ void controlHeater() {
 }
 
 void startHeating() {
-  Serial.println("DEBUG: startHeating() called.");
   heatingActive = true;
   temperatureReached = false;
   treatmentActive = false; 
   treatmentDuration = (unsigned long)duration * 60UL * 1000UL; 
   controlHeater();
   displayHeatingScreen();
-  Serial.println("DEBUG: Heating started. Total duration set to: " + String(treatmentDuration) + "ms");
 }
 
 void updateServo() {
   if (servoActive) {
-    servoPosition += servoDirection * servoSpeed;
-    if (servoPosition >= servoMaxAngle) {
-      servoPosition = servoMaxAngle;
+    servoPositionUs += servoDirection * servoSpeedUs;
+    
+    if (servoPositionUs >= servoMaxUs) {
+      servoPositionUs = servoMaxUs;
       servoDirection = -1;
-    } else if (servoPosition <= servoMinAngle) {
-      servoPosition = servoMinAngle;
+    } else if (servoPositionUs <= servoMinUs) {
+      servoPositionUs = servoMinUs;
       servoDirection = 1;
     }
-    oscillationServo.write(servoPosition);
+    oscillationServo.writeMicroseconds(servoPositionUs);
   }
 }
 
 void startTreatment() {
-  Serial.println("DEBUG: startTreatment() called.");
   treatmentActive = true;
   heatingActive = false;
   servoActive = true;
-  servoPosition = 90;
-  oscillationServo.write(servoPosition);
+  servoPositionUs = 1500;
+  oscillationServo.writeMicroseconds(servoPositionUs);
   treatmentStartTime = millis();
   
   digitalWrite(PUMP_RELAY_PIN, HIGH);
@@ -490,11 +482,9 @@ void startTreatment() {
     digitalWrite(BUZZER_PIN, LOW);
     delay(100);
   }
-  Serial.println("DEBUG: Treatment actually started. Start time: " + String(treatmentStartTime));
 }
 
 void stopTreatment() {
-  Serial.println("DEBUG: stopTreatment() called.");
   treatmentActive = false;
   heatingActive = false;
   temperatureReached = false;
@@ -502,10 +492,11 @@ void stopTreatment() {
   digitalWrite(HEATER_RELAY_PIN, LOW);
   digitalWrite(PUMP_RELAY_PIN, LOW);
   heaterState = false;
-  oscillationServo.write(90);
+  oscillationServo.writeMicroseconds(1500); // Center servo on stop
   if (!emergencyStopActive) {
     for (int i = 0; i < 3; i++) {
-      digitalWrite(BUZZER_PIN, HIGH); delay(100);
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(100);
       digitalWrite(BUZZER_PIN, LOW); delay(100);
     }
     lcd.clear();
@@ -514,35 +505,27 @@ void stopTreatment() {
     delay(3000);
     displaySettingsScreen();
   }
-  Serial.println("DEBUG: Treatment stopped/completed.");
 }
 
 void loop() {
   unsigned long currentMillis = millis();
   server.handleClient();
   checkEmergencyStop();
+
   if (emergencyStopActive) {
-    if (currentMillis % 1000 < 500) {
-        digitalWrite(BUZZER_PIN, HIGH);
-    } else {
-        digitalWrite(BUZZER_PIN, LOW);
+    // Rollover-safe buzzer logic
+    if (currentMillis - lastEmergencyBuzzerTime >= 500) {
+      lastEmergencyBuzzerTime = currentMillis;
+      digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN)); // Toggle buzzer state
     }
     return;
   }
 
   if (treatmentActive) {
     if (millis() - treatmentStartTime >= treatmentDuration) {
-        Serial.println("--- TIMER CHECK ---");
-        Serial.println("DEBUG: Timer finished. Calling stopTreatment().");
-        Serial.print("DEBUG: Elapsed time: "); Serial.println(millis() - treatmentStartTime);
-        Serial.print("DEBUG: Target duration: "); Serial.println(treatmentDuration);
-        Serial.print("DEBUG: Current millis: "); Serial.println(millis());
-        Serial.print("DEBUG: Start time: "); Serial.println(treatmentStartTime);
-        Serial.println("--------------------");
         stopTreatment();
     }
   }
-
 
   if (currentMillis - lastTempReadTime >= tempReadInterval) {
     lastTempReadTime = currentMillis;
@@ -551,9 +534,10 @@ void loop() {
       currentTemperature = temp;
     }
     controlHeater();
+
     if (treatmentActive) displayTreatmentScreen();
     else if (heatingActive && !temperatureReached) displayHeatingScreen();
-    else if (!heatingActive && !treatmentActive) {
+    else if (!heatingActive && !treatmentActive) { // Update temp on settings screen
         lcd.setCursor(14, 0);
         lcd.print("      ");
         lcd.setCursor(14, 0);
@@ -590,27 +574,41 @@ void processSettingsKeyPress(char key) {
       settingDuration = !settingDuration;
       break;
     case '#':
-      if (settingDuration) durationStr = ""; else temperatureStr = "";
-      break;
-    case 'D':
-      duration = durationStr.toInt();
-      temperature = temperatureStr.toInt();
-      if (duration > MAX_DURATION) {
-        showLimitExceededScreen(true);
-        durationStr = "";
-      } else if (temperature > MAX_TEMPERATURE) {
-        showLimitExceededScreen(false);
-        temperatureStr = "";
+      if (settingDuration) {
+        durationStr[0] = '\0';
       } else {
+        temperatureStr[0] = '\0';
+      }
+      break;
+    case 'D': {
+      int enteredDuration = atoi(durationStr);
+      int enteredTemperature = atoi(temperatureStr);
+
+      if (enteredDuration <= 0 || enteredDuration > MAX_DURATION) {
+        showLimitExceededScreen(true);
+        durationStr[0] = '\0';
+      } else if (enteredTemperature <= 0 || enteredTemperature > MAX_TEMPERATURE) {
+        showLimitExceededScreen(false);
+        temperatureStr[0] = '\0';
+      } else {
+        duration = enteredDuration;
+        temperature = enteredTemperature;
         startHeating();
       }
-      return;
+      break;
+    }
     default:
       if (key >= '0' && key <= '9') {
         if (settingDuration) {
-          if (durationStr.length() < 2) durationStr += key;
+          if (strlen(durationStr) < 2) {
+            char temp[2] = {key, '\0'};
+            strcat(durationStr, temp);
+          }
         } else {
-          if (temperatureStr.length() < 2) temperatureStr += key;
+          if (strlen(temperatureStr) < 2) {
+            char temp[2] = {key, '\0'};
+            strcat(temperatureStr, temp);
+          }
         }
       }
       break;
